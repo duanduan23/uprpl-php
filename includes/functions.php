@@ -383,7 +383,7 @@ function getAdminStats($pdo, $adminUsername) {
     $stmt->execute([$adminUsername]);
     $stats['total'] = $stmt->fetch()['total'];
     
-    $stmt = $pdo->prepare("SELECT SUM(total) as revenue FROM orders WHERE assigned_to = ? AND payment_status = 'verified'");
+    $stmt = $pdo->prepare("SELECT SUM(total) as revenue FROM orders WHERE assigned_to = ? AND status = 'success'");
     $stmt->execute([$adminUsername]);
     $stats['revenue'] = $stmt->fetch()['revenue'] ?? 0;
     
@@ -391,7 +391,7 @@ function getAdminStats($pdo, $adminUsername) {
 }
 
 /**
- * Get admin pusat stats
+ * Get admin pusat stats - VERSI FIX TOTAL PENDAPATAN
  */
 function getAdminPusatStats($pdo) {
     $stats = [
@@ -405,29 +405,47 @@ function getAdminPusatStats($pdo) {
         'total_emails' => 0
     ];
     
+    // Total admin UP
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM users WHERE role = 'admin_up'");
     $stats['total_admins'] = $stmt->fetch()['total'];
     
+    // Admin UP aktif
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM users WHERE role = 'admin_up' AND status = 'active'");
     $stats['active_admins'] = $stmt->fetch()['total'];
     
+    // Total orders
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM orders");
     $stats['total_orders'] = $stmt->fetch()['total'];
     
+    // Orders dalam proses
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM orders WHERE status = 'process'");
     $stats['process_orders'] = $stmt->fetch()['total'];
     
+    // Orders selesai
     $stmt = $pdo->query("SELECT COUNT(*) as total FROM orders WHERE status = 'success'");
     $stats['completed_orders'] = $stmt->fetch()['total'];
     
-    $stmt = $pdo->query("SELECT COUNT(*) as total FROM payments WHERE verified = FALSE");
-    $stats['pending_payments'] = $stmt->fetch()['total'] ?? 0;
+    // Pending payments - dengan try-catch
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as total FROM payments WHERE verified = FALSE");
+        $stats['pending_payments'] = $stmt->fetch()['total'] ?? 0;
+    } catch (Exception $e) {
+        $stats['pending_payments'] = 0;
+    }
     
-    $stmt = $pdo->query("SELECT SUM(total) as revenue FROM orders WHERE payment_status = 'verified'");
+    // ===== FIX: TOTAL PENDAPATAN =====
+    // Hitung dari orders yang sudah selesai (status success)
+    $stmt = $pdo->query("SELECT SUM(total) as revenue FROM orders WHERE status = 'success'");
     $stats['total_revenue'] = $stmt->fetch()['revenue'] ?? 0;
+    // =================================
     
-    $stmt = $pdo->query("SELECT COUNT(*) as total FROM email_logs");
-    $stats['total_emails'] = $stmt->fetch()['total'];
+    // Total email
+    try {
+        $stmt = $pdo->query("SELECT COUNT(*) as total FROM email_logs");
+        $stats['total_emails'] = $stmt->fetch()['total'];
+    } catch (Exception $e) {
+        $stats['total_emails'] = 0;
+    }
     
     return $stats;
 }

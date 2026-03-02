@@ -1,6 +1,6 @@
 <?php
 // ==================== ORDER AJAX ====================
-// File: order_ajax.php - VERSI FINAL
+// File: order_ajax.php - VERSI DENGAN BATASAN AMBIL PESANAN
 
 require_once 'config/database.php';
 require_once 'includes/functions.php';
@@ -67,6 +67,66 @@ switch ($action) {
             $pdo->commit();
             
             echo json_encode(['success' => true, 'message' => 'Order selesai']);
+            
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            echo json_encode(['success' => false, 'message' => 'Gagal: ' . $e->getMessage()]);
+        }
+        break;
+        
+    case 'take_order':
+        $orderNumber = $_POST['order_number'] ?? '';
+        
+        if (empty($orderNumber)) {
+            echo json_encode(['success' => false, 'message' => 'Nomor order tidak valid']);
+            exit;
+        }
+        
+        try {
+            $pdo->beginTransaction();
+            
+            // ========== CEK BATASAN PESANAN PER ADMIN ==========
+            // Cek apakah user ini udah pegang berapa pesanan yang masih proses
+            $stmt_cek = $pdo->prepare("SELECT COUNT(*) as total FROM orders WHERE assigned_to = ? AND status = 'process'");
+            $stmt_cek->execute([$username]);
+            $jumlah_pegang = $stmt_cek->fetch()['total'];
+            
+            // Batasi maksimal 3 pesanan per admin (bisa diubah angkanya)
+            $MAX_PESANAN = 3; // Ganti angka ini sesuai keinginan
+            
+            if ($jumlah_pegang >= $MAX_PESANAN) {
+                echo json_encode([
+                    'success' => false, 
+                    'message' => "Kamu sudah memegang $jumlah_pegang pesanan. Selesaikan dulu sebelum mengambil yang baru! (Maksimal $MAX_PESANAN)"
+                ]);
+                exit;
+            }
+            // ===================================================
+            
+            // Cek apakah order masih available (belum diassign)
+            $stmt = $pdo->prepare("SELECT * FROM orders WHERE order_number = ? AND assigned_to IS NULL");
+            $stmt->execute([$orderNumber]);
+            $order = $stmt->fetch();
+            
+            if (!$order) {
+                echo json_encode(['success' => false, 'message' => 'Pesanan sudah diambil orang lain']);
+                exit;
+            }
+            
+            // Update assigned_to dan status
+            $stmt = $pdo->prepare("UPDATE orders SET assigned_to = ?, status = 'process' WHERE order_number = ?");
+            $stmt->execute([$username, $orderNumber]);
+            
+            // Log aktivitas
+            logActivity($pdo, $userId, $username, 'take_order', "Mengambil pesanan: $orderNumber");
+            
+            $pdo->commit();
+            
+            echo json_encode([
+                'success' => true, 
+                'message' => 'Pesanan berhasil diambil',
+                'sisa_kuota' => $MAX_PESANAN - ($jumlah_pegang + 1)
+            ]);
             
         } catch (Exception $e) {
             $pdo->rollBack();

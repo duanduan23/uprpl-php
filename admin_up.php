@@ -1,6 +1,6 @@
 <?php
 // ==================== ADMIN UP ====================
-// File: admin_up.php - VERSI FINAL
+// File: admin_up.php - VERSI DENGAN LOADING DETAIL
 
 require_once 'config/database.php';
 require_once 'includes/functions.php';
@@ -29,9 +29,11 @@ $userId = $_SESSION['admin_up_id'];
 $userName = $_SESSION['admin_up_name'];
 $username = $_SESSION['admin_up_username'];
 
-// Ambil orders untuk admin ini
-$stmt = $pdo->prepare("SELECT * FROM orders WHERE assigned_to = ? ORDER BY created_at DESC");
-$stmt->execute([$username]);
+// Tampilkan SEMUA pesanan, urutkan dari yang belum diassign
+$stmt = $pdo->prepare("SELECT * FROM orders ORDER BY 
+    CASE WHEN assigned_to IS NULL THEN 0 ELSE 1 END, 
+    created_at DESC");
+$stmt->execute();
 $orders = $stmt->fetchAll();
 
 // Hitung statistik
@@ -238,6 +240,10 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
             background: rgba(16,185,129,0.05);
         }
 
+        .order-row.pending td:first-child {
+            border-left: 4px solid #3498db;
+        }
+
         .order-row.process td:first-child {
             border-left: 4px solid #f59e0b;
         }
@@ -264,6 +270,11 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
             color: #10b981;
         }
 
+        .status-badge.pending {
+            background: rgba(52,152,219,0.1);
+            color: #3498db;
+        }
+
         .action-btn {
             padding: 8px 16px;
             background: #f59e0b;
@@ -277,6 +288,21 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
 
         .action-btn:hover {
             background: #e67e22;
+        }
+
+        .take-btn {
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background 0.3s;
+        }
+
+        .take-btn:hover {
+            background: #5a67d8;
         }
 
         .success-text {
@@ -301,6 +327,12 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
             color: #667eea;
             cursor: pointer;
             font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .detail-btn:hover {
+            background: #667eea;
+            color: white;
         }
 
         .footer {
@@ -416,6 +448,22 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
             flex: 1;
             color: #666;
         }
+
+        /* Loading spinner */
+        .loading-spinner {
+            display: inline-block;
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -494,6 +542,7 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
                 <h3><i class="fas fa-clipboard-list"></i> Daftar Pesanan</h3>
                 <div class="filter-options">
                     <button class="filter-btn active" data-filter="all">Semua</button>
+                    <button class="filter-btn" data-filter="pending">Menunggu</button>
                     <button class="filter-btn" data-filter="process">Dalam Proses</button>
                     <button class="filter-btn" data-filter="success">Selesai</button>
                 </div>
@@ -523,8 +572,14 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
                             </td>
                         </tr>
                         <?php else: ?>
-                            <?php foreach ($orders as $order): ?>
-                            <tr class="order-row <?php echo $order['status']; ?>">
+                            <?php foreach ($orders as $order): 
+                                // Tentukan class untuk row
+                                $rowClass = '';
+                                if ($order['status'] === 'process') $rowClass = 'process';
+                                else if ($order['status'] === 'success') $rowClass = 'success';
+                                else if ($order['assigned_to'] === null) $rowClass = 'pending';
+                            ?>
+                            <tr class="order-row <?php echo $rowClass; ?>" data-order-number="<?php echo $order['order_number']; ?>">
                                 <td>
                                     <strong><?php echo htmlspecialchars($order['customer_name']); ?></strong><br>
                                     <small><?php echo htmlspecialchars($order['customer_class']); ?></small><br>
@@ -532,7 +587,7 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
                                 </td>
                                 <td>
                                     <strong><?php echo htmlspecialchars($order['service_name']); ?></strong><br>
-                                    <small><?php echo htmlspecialchars(substr($order['description'] ?? '', 0, 30)); ?></small>
+                                    <small><?php echo htmlspecialchars(substr($order['catatan'] ?? '', 0, 30)); ?></small>
                                 </td>
                                 <td>
                                     <a href="<?php echo htmlspecialchars($order['drive_link']); ?>" target="_blank" class="drive-link">
@@ -545,19 +600,47 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
                                     </button>
                                 </td>
                                 <td>Rp <?php echo number_format($order['total'], 0, ',', '.'); ?></td>
+                                
+                                <!-- ========== KOLOM STATUS ========== -->
                                 <td>
-                                    <span class="status-badge <?php echo $order['status']; ?>">
-                                        <?php echo $order['status'] === 'process' ? 'Proses' : 'Selesai'; ?>
-                                    </span>
+                                    <?php if ($order['assigned_to'] === null): ?>
+                                        <span class="status-badge pending">Menunggu</span>
+                                    <?php else: ?>
+                                        <span class="status-badge <?php echo $order['status']; ?>">
+                                            <?php 
+                                            if ($order['status'] === 'process') echo 'Proses';
+                                            else if ($order['status'] === 'success') echo 'Selesai';
+                                            else echo ucfirst($order['status']);
+                                            ?>
+                                        </span>
+                                        <br><small>by <?php echo $order['assigned_to']; ?></small>
+                                    <?php endif; ?>
                                 </td>
+                                
+                                <!-- ========== KOLOM AKSI ========== -->
                                 <td>
-                                    <?php if ($order['status'] === 'process'): ?>
+                                    <?php if ($order['assigned_to'] === null): ?>
+                                        <!-- Belum diambil siapa pun -->
+                                        <button class="take-btn" onclick="ambilPesanan('<?php echo $order['order_number']; ?>')">
+                                            <i class="fas fa-hand-pointer"></i> Ambil
+                                        </button>
+                                        
+                                    <?php elseif ($order['assigned_to'] === $username && $order['status'] === 'process'): ?>
+                                        <!-- Punya lo dan belum selesai -->
                                         <button class="action-btn" onclick="markAsDone('<?php echo $order['order_number']; ?>')">
                                             <i class="fas fa-check"></i> Selesai
                                         </button>
-                                    <?php else: ?>
+                                        
+                                    <?php elseif ($order['assigned_to'] === $username): ?>
+                                        <!-- Punya lo dan udah selesai -->
                                         <span class="success-text">
                                             <i class="fas fa-check-circle"></i> Selesai
+                                        </span>
+                                        
+                                    <?php else: ?>
+                                        <!-- Diambil admin lain -->
+                                        <span style="color: #7f8c8d; font-size: 12px;">
+                                            <i class="fas fa-lock"></i> Diambil <?php echo $order['assigned_to']; ?>
                                         </span>
                                     <?php endif; ?>
                                 </td>
@@ -640,6 +723,8 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
         function markAsDone(orderNumber) {
             if (!confirm('Tandai pesanan ini sebagai selesai?')) return;
             
+            showLoading();
+            
             $.ajax({
                 url: 'order_ajax.php',
                 method: 'POST',
@@ -649,61 +734,123 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
                 },
                 dataType: 'json',
                 success: function(response) {
+                    hideLoading();
                     if (response.success) {
-                        alert('Pesanan selesai!');
+                        alert('✅ Pesanan selesai!');
                         location.reload();
                     } else {
-                        alert('Gagal: ' + response.message);
+                        alert('❌ Gagal: ' + response.message);
                     }
                 },
                 error: function() {
-                    alert('Terjadi kesalahan server');
+                    hideLoading();
+                    alert('❌ Terjadi kesalahan server');
                 }
             });
         }
 
-        // View detail
+        // Ambil pesanan
+        function ambilPesanan(orderNumber) {
+            if (!confirm('Ambil pesanan ini untuk dikerjakan?')) return;
+            
+            showLoading();
+            
+            $.ajax({
+                url: 'order_ajax.php',
+                method: 'POST',
+                data: {
+                    action: 'take_order',
+                    order_number: orderNumber
+                },
+                dataType: 'json',
+                success: function(response) {
+                    hideLoading();
+                    if (response.success) {
+                        alert('✅ Pesanan berhasil diambil!');
+                        location.reload();
+                    } else {
+                        alert('❌ Gagal: ' + response.message);
+                    }
+                },
+                error: function() {
+                    hideLoading();
+                    alert('❌ Terjadi kesalahan server');
+                }
+            });
+        }
+
+        // ========== VIEW DETAIL DENGAN LOADING BENERAN ==========
         function viewDetail(orderNumber) {
             const modal = document.getElementById('detailModal');
             const modalBody = document.getElementById('modalBody');
             
-            // Ambil data dari baris
-            const rows = document.querySelectorAll('.order-row');
-            for (let row of rows) {
-                if (row.cells[0]?.innerText.includes(orderNumber)) {
-                    const customer = row.cells[0].innerText;
-                    const service = row.cells[1].innerText;
-                    const drive = row.cells[2].querySelector('a')?.href || '-';
-                    const amount = row.cells[4].innerText;
-                    
-                    modalBody.innerHTML = `
-                        <div class="info-row">
-                            <span class="info-label">No. Order:</span>
-                            <span class="info-value">${orderNumber}</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="info-label">Pelanggan:</span>
-                            <span class="info-value">${customer}</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="info-label">Layanan:</span>
-                            <span class="info-value">${service}</span>
-                        </div>
-                        <div class="info-row">
-                            <span class="info-label">Link Drive:</span>
-                            <span class="info-value"><a href="${drive}" target="_blank">${drive}</a></span>
-                        </div>
-                        <div class="info-row">
-                            <span class="info-label">Jumlah:</span>
-                            <span class="info-value">${amount}</span>
-                        </div>
-                    `;
-                    break;
-                }
-            }
+            // Tampilkan loading dulu
+            modalBody.innerHTML = `
+                <div style="text-align: center; padding: 40px;">
+                    <div class="loading-spinner"></div>
+                    <p style="margin-top: 20px; color: #666;">Mengambil data pesanan...</p>
+                </div>
+            `;
             
             modal.classList.add('active');
+            
+            // Simulasi loading 1 detik (biar keliatan efeknya)
+            setTimeout(function() {
+                // Cari data dari baris tabel
+                const rows = document.querySelectorAll('.order-row');
+                let found = false;
+                
+                for (let row of rows) {
+                    if (row.dataset.orderNumber === orderNumber) {
+                        const cells = row.cells;
+                        const customer = cells[0].innerText;
+                        const service = cells[1].innerText;
+                        const drive = cells[2].querySelector('a')?.href || '-';
+                        const amount = cells[4].innerText;
+                        const status = cells[5].innerText;
+                        
+                        modalBody.innerHTML = `
+                            <div class="info-row">
+                                <span class="info-label">No. Order:</span>
+                                <span class="info-value"><strong>${orderNumber}</strong></span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Pelanggan:</span>
+                                <span class="info-value">${customer}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Layanan:</span>
+                                <span class="info-value">${service}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Link Drive:</span>
+                                <span class="info-value"><a href="${drive}" target="_blank" style="color: #667eea;">${drive}</a></span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Jumlah:</span>
+                                <span class="info-value">${amount}</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Status:</span>
+                                <span class="info-value">${status}</span>
+                            </div>
+                        `;
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (!found) {
+                    modalBody.innerHTML = `
+                        <div style="color: red; text-align: center; padding: 20px;">
+                            <i class="fas fa-exclamation-circle" style="font-size: 48px; margin-bottom: 10px;"></i>
+                            <p>Data pesanan tidak ditemukan</p>
+                        </div>
+                    `;
+                }
+            }, 800); // Loading 0.8 detik
         }
+        // ==========================================================
 
         function closeModal() {
             document.getElementById('detailModal').classList.remove('active');
@@ -716,6 +863,25 @@ $totalRevenue = array_sum(array_column($orders, 'total'));
                 closeModal();
             }
         };
+
+        // Loading functions
+        function showLoading() {
+            const loading = document.createElement('div');
+            loading.id = 'loading';
+            loading.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.8); z-index: 99999;
+                display: flex; justify-content: center; align-items: center;
+                flex-direction: column; color: white;
+            `;
+            loading.innerHTML = '<div class="loading-spinner"></div><p style="margin-top: 20px;">Loading...</p>';
+            document.body.appendChild(loading);
+        }
+
+        function hideLoading() {
+            const loading = document.getElementById('loading');
+            if (loading) loading.remove();
+        }
     </script>
 </body>
 </html>

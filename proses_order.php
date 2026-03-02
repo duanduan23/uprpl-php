@@ -1,6 +1,9 @@
 <?php
+ini_set('log_errors', 1);
+ini_set('error_log', 'C:\xampp1\php\logs\php_error_log');
+error_log("========== PROSES ORDER DIAKSES ==========");
 // ==================== PROSES ORDER ====================
-// File: proses_order.php - VERSI FIX
+// File: proses_order.php - VERSI FIX KAOS SABLON
 
 require_once 'config/database.php';
 require_once 'includes/functions.php';
@@ -50,12 +53,32 @@ try {
         exit;
     }
     
-    // Parse jenis layanan
-    $parts = explode('_', $jenis_layanan);
-    $layanan = $parts[0] ?? '';
-    $jenis = isset($parts[1]) ? $parts[1] : '';
-    
-    error_log("LAYANAN: $layanan, JENIS: $jenis");
+    // ========== PARSE JENIS LAYANAN - FIX UNTUK KAOS SABLON ==========
+    error_log("JENIS LAYANAN DITERIMA: " . $jenis_layanan);
+
+    // CEK APAKAH INI KAOS SABLON
+    if (strpos($jenis_layanan, 'kaos_sablon') !== false) {
+        $layanan = 'kaos_sablon';
+        
+        // Ambil jenis dari akhir string (kaos/sablon/paket)
+        if (strpos($jenis_layanan, '_kaos') !== false) {
+            $jenis = 'kaos';
+        } elseif (strpos($jenis_layanan, '_sablon') !== false) {
+            $jenis = 'sablon';
+        } elseif (strpos($jenis_layanan, '_paket') !== false) {
+            $jenis = 'paket';
+        } else {
+            $jenis = 'paket'; // default
+        }
+        
+        error_log("KAOS SABLON DETECTED: layanan = $layanan, jenis = $jenis");
+    } else {
+        // Bukan kaos sablon, langsung pake string aslinya
+        $layanan = $jenis_layanan;
+        $jenis = '';
+        error_log("LAYANAN BIASA: $layanan");
+    }
+    // ================================================================
     
     // Data layanan
     $layananData = [
@@ -71,17 +94,22 @@ try {
     ];
     
     // Validasi layanan
-    if (!isset($layananData[$layanan])) {
-        error_log("LAYANAN TIDAK VALID: $layanan");
-        echo json_encode(['success' => false, 'message' => 'Layanan tidak valid: ' . $layanan]);
+    if ($layanan == 'print_hitam' || $layanan == 'print_warna' || $layanan == 'fotocopy' || $layanan == 'kaos_sablon') {
+        // Ini valid, lanjutkan
+        error_log("LAYANAN VALID: $layanan");
+    } else {
+        echo json_encode([
+            'success' => false, 
+            'message' => 'Layanan tidak valid: ' . $layanan . ' (dari: ' . $jenis_layanan . ')'
+        ]);
         exit;
     }
     
-    // Hitung harga
+    // ========== HITUNG HARGA ==========
     if ($layanan === 'kaos_sablon') {
+        // Untuk kaos sablon, cek jenisnya
         if (empty($jenis)) {
-            echo json_encode(['success' => false, 'message' => 'Jenis paket harus dipilih (kaos/sablon/paket)']);
-            exit;
+            $jenis = 'paket'; // default
         }
         
         $hargaKey = 'harga_' . $jenis;
@@ -92,33 +120,47 @@ try {
         
         $hargaSatuan = $layananData['kaos_sablon'][$hargaKey];
         $serviceName = $layananData['kaos_sablon']['nama'] . ' (' . $jenis . ')';
+        error_log("KAOS SABLON: harga = $hargaSatuan, nama = $serviceName");
     } else {
+        // Untuk layanan biasa (print/fotocopy)
         $hargaSatuan = $layananData[$layanan]['harga'];
         $serviceName = $layananData[$layanan]['nama'];
+        error_log("LAYANAN BIASA: harga = $hargaSatuan, nama = $serviceName");
     }
+    // ==================================
     
     $subtotal = $hargaSatuan * $jumlah;
     $uniqueCode = generateUniqueCode();
     $total = $subtotal + $uniqueCode;
     $orderNumber = generateOrderNumber();
     
-    // Simpan ke database
+    // ========== SEMUA PESANAN MASUK KE ANTRIAN ==========
+    // Tidak auto-assign ke siapapun
+    // Semua admin akan lihat pesanan ini sebagai "Menunggu"
+    $assigned_to = null;
+    $status = 'pending_payment';
+
+    error_log("PESANAN BARU: $orderNumber - $serviceName - Total: $total (MENUNGGU ADMIN)");
+    // ====================================================
+    
+    // ========== SIMPAN KE DATABASE ==========
     $stmt = $pdo->prepare("INSERT INTO orders (
         order_number, customer_name, customer_class, customer_phone, customer_email,
         service, service_name, jumlah, ukuran, jenis_sablon, warna_kaos, ukuran_kertas,
         drive_link, catatan, harga_satuan, subtotal, unique_code, total,
-        status, payment_status, created_at
+        status, payment_status, assigned_to, created_at
     ) VALUES (
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?,
-        'pending_payment', 'belum_bayar', NOW()
+        ?, ?, ?, NOW()
     )");
     
     $result = $stmt->execute([
         $orderNumber, $nama, $kelas, $telepon, $email,
         $layanan, $serviceName, $jumlah, $ukuran, $jenis_sablon, $warna_kaos, $ukuran_kertas,
-        $link_drive, $catatan, $hargaSatuan, $subtotal, $uniqueCode, $total
+        $link_drive, $catatan, $hargaSatuan, $subtotal, $uniqueCode, $total,
+        $status, 'belum_bayar', $assigned_to
     ]);
     
     if (!$result) {
@@ -127,7 +169,7 @@ try {
     }
     
     // Log aktivitas
-    logActivity($pdo, null, $nama, 'create_order', 'Membuat pesanan baru: ' . $orderNumber);
+    logActivity($pdo, null, $nama, 'create_order', 'Membuat pesanan baru: ' . $orderNumber . ' (' . $serviceName . ')');
     
     // Return success
     echo json_encode([
@@ -139,7 +181,8 @@ try {
             'total' => $total,
             'uniqueCode' => $uniqueCode,
             'serviceName' => $serviceName,
-            'jumlah' => $jumlah
+            'jumlah' => $jumlah,
+            'assigned_to' => $assigned_to
         ]
     ]);
     
