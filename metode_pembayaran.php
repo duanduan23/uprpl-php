@@ -3,7 +3,15 @@
 // File: metode_pembayaran.php - VERSI FINAL
 
 require_once 'config/database.php';
+require_once 'config/midtrans.php';
 require_once 'includes/functions.php';
+require_once 'vendor/autoload.php';
+
+// Konfigurasi Midtrans
+\Midtrans\Config::$serverKey = MIDTRANS_SERVER_KEY;
+\Midtrans\Config::$isProduction = MIDTRANS_IS_PRODUCTION;
+\Midtrans\Config::$isSanitized = true;
+\Midtrans\Config::$is3ds = true;
 
 // Ambil order dari parameter URL
 $orderNumber = $_GET['order'] ?? '';
@@ -20,6 +28,49 @@ if (!$order) {
     header('Location: index.php');
     exit;
 }
+
+// Siapkan parameter untuk Midtrans
+$params = [
+    'transaction_details' => [
+        'order_id' => $orderNumber,
+        'gross_amount' => (int) $order['total'],
+    ],
+    'customer_details' => [
+        'first_name' => $order['customer_name'],
+        'email' => $order['customer_email'],
+        'phone' => $order['customer_phone'],
+    ],
+    'item_details' => [
+        [
+            'id' => $order['service'],
+            'price' => (int) $order['harga_satuan'],
+            'quantity' => (int) $order['jumlah'],
+            'name' => $order['service_name'],
+        ]
+    ],
+    'callbacks' => [
+        'finish' => 'http://localhost/uprpl-php/payment_success.php?order=' . $orderNumber,
+    ],
+    'enabled_payments' => [
+        'gopay', 
+        'dana', 
+        'shopeepay', 
+        'qris',
+        'bank_transfer_bca',
+        'bank_transfer_mandiri',
+        'bank_transfer_bri',
+        'bank_transfer_permata'
+    ]
+];
+
+try {
+    // Dapatkan Snap Token
+    $snapToken = \Midtrans\Snap::getSnapToken($params);
+    $midtrans_error = null;
+} catch (Exception $e) {
+    $snapToken = null;
+    $midtrans_error = $e->getMessage();
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -29,6 +80,9 @@ if (!$order) {
     <title>Pembayaran - Unit Produksi RPL</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Midtrans Snap JS (tambahin ini doang) -->
+    <script src="https://app.sandbox.midtrans.com/snap/snap.js" 
+            data-client-key="<?php echo MIDTRANS_CLIENT_KEY; ?>"></script>
     <style>
         * {
             margin: 0;
@@ -167,6 +221,11 @@ if (!$order) {
             padding: 20px;
             margin-bottom: 25px;
             border: 2px dashed #667eea;
+            display: none;
+        }
+
+        .dana-info.active {
+            display: block;
         }
 
         .dana-number {
@@ -217,10 +276,15 @@ if (!$order) {
             background: #f8f9fa;
             margin: 20px 0;
             transition: all 0.3s;
+            display: none;
         }
 
         .upload-area:hover {
             background: #e8f4fc;
+        }
+
+        .upload-area.active {
+            display: block;
         }
 
         .upload-icon {
@@ -267,6 +331,25 @@ if (!$order) {
             cursor: not-allowed;
         }
 
+        .btn-midtrans {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-weight: 700;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 15px;
+        }
+
+        .btn-midtrans:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
         .warning-box {
             background: #fff3cd;
             border-left: 5px solid #ffc107;
@@ -305,6 +388,15 @@ if (!$order) {
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.8; }
+        }
+
+        .error-midtrans {
+            background: #f8d7da;
+            border-left: 5px solid #dc3545;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            color: #721c24;
         }
 
         @media (max-width: 768px) {
@@ -362,114 +454,112 @@ if (!$order) {
                 </div>
             </div>
 
+            <?php if ($midtrans_error): ?>
+            <div class="error-midtrans">
+                <strong>⚠️ Error Midtrans:</strong> <?php echo $midtrans_error; ?>
+            </div>
+            <?php endif; ?>
+
             <!-- Metode Pembayaran -->
             <div class="method-title">
                 <i class="fas fa-credit-card"></i> Pilih Metode Pembayaran
             </div>
 
             <div class="method-grid">
-                <div class="method-card selected" data-method="dana" onclick="selectMethod('dana')">
+                <div class="method-card selected" data-method="midtrans" onclick="selectMethod('midtrans')">
+                    <div class="method-icon">
+                        <i class="fas fa-credit-card" style="color: #667eea;"></i>
+                    </div>
+                    <div class="method-name">Midtrans</div>
+                    <div class="method-desc">Gopay, DANA, QRIS, Transfer Bank</div>
+                </div>
+                
+                <div class="method-card" data-method="dana" onclick="selectMethod('dana')">
                     <div class="method-icon">
                         <i class="fas fa-wallet" style="color: #008080;"></i>
                     </div>
-                    <div class="method-name">DANA</div>
-                    <div class="method-desc">Transfer instan 24 jam</div>
-                </div>
-                
-                <div class="method-card" data-method="bca" onclick="selectMethod('bca')">
-                    <div class="method-icon">
-                        <i class="fas fa-university" style="color: #004080;"></i>
-                    </div>
-                    <div class="method-name">BCA</div>
-                    <div class="method-desc">Virtual Account</div>
-                </div>
-                
-                <div class="method-card" data-method="mandiri" onclick="selectMethod('mandiri')">
-                    <div class="method-icon">
-                        <i class="fas fa-university" style="color: #003366;"></i>
-                    </div>
-                    <div class="method-name">Mandiri</div>
-                    <div class="method-desc">Virtual Account</div>
-                </div>
-                
-                <div class="method-card" data-method="bri" onclick="selectMethod('bri')">
-                    <div class="method-icon">
-                        <i class="fas fa-university" style="color: #0066cc;"></i>
-                    </div>
-                    <div class="method-name">BRI</div>
-                    <div class="method-desc">Virtual Account</div>
+                    <div class="method-name">DANA Manual</div>
+                    <div class="method-desc">Transfer manual + upload bukti</div>
                 </div>
             </div>
 
-            <!-- Informasi DANA -->
-            <div id="danaInfo">
-                <div class="dana-info">
-                    <div style="text-align: center;">
-                        <i class="fas fa-wallet" style="font-size: 48px; color: #008080;"></i>
-                        <h4 style="margin-top: 10px;">PEMBAYARAN VIA DANA</h4>
+            <!-- Informasi DANA Manual -->
+            <div id="danaInfo" class="dana-info">
+                <div style="text-align: center;">
+                    <i class="fas fa-wallet" style="font-size: 48px; color: #008080;"></i>
+                    <h4 style="margin-top: 10px;">PEMBAYARAN VIA DANA MANUAL</h4>
+                </div>
+                
+                <div class="dana-number">
+                    <?php echo DANA_NUMBER; ?>
+                </div>
+                
+                <div style="text-align: center; margin-bottom: 20px;">
+                    a.n. <?php echo DANA_NAME; ?>
+                </div>
+                
+                <div class="instruction-steps">
+                    <div class="step-item">
+                        <div class="step-number">1</div>
+                        <div>Buka aplikasi DANA di ponsel Anda</div>
                     </div>
-                    
-                    <div class="dana-number">
-                        <?php echo DANA_NUMBER; ?>
+                    <div class="step-item">
+                        <div class="step-number">2</div>
+                        <div>Pilih menu "Kirim" atau "Transfer"</div>
                     </div>
-                    
-                    <div style="text-align: center; margin-bottom: 20px;">
-                        a.n. <?php echo DANA_NAME; ?>
+                    <div class="step-item">
+                        <div class="step-number">3</div>
+                        <div>Masukkan nomor DANA: <strong><?php echo DANA_NUMBER; ?></strong></div>
                     </div>
-                    
-                    <div class="instruction-steps">
-                        <div class="step-item">
-                            <div class="step-number">1</div>
-                            <div>Buka aplikasi DANA di ponsel Anda</div>
-                        </div>
-                        <div class="step-item">
-                            <div class="step-number">2</div>
-                            <div>Pilih menu "Kirim" atau "Transfer"</div>
-                        </div>
-                        <div class="step-item">
-                            <div class="step-number">3</div>
-                            <div>Masukkan nomor DANA: <strong><?php echo DANA_NUMBER; ?></strong></div>
-                        </div>
-                        <div class="step-item">
-                            <div class="step-number">4</div>
-                            <div>Masukkan jumlah: <strong>Rp <?php echo number_format($order['total'], 0, ',', '.'); ?></strong></div>
-                        </div>
-                        <div class="step-item">
-                            <div class="step-number">5</div>
-                            <div>Pada catatan, tuliskan <strong>No. Order + Nama</strong></div>
-                        </div>
+                    <div class="step-item">
+                        <div class="step-number">4</div>
+                        <div>Masukkan jumlah: <strong>Rp <?php echo number_format($order['total'], 0, ',', '.'); ?></strong></div>
+                    </div>
+                    <div class="step-item">
+                        <div class="step-number">5</div>
+                        <div>Upload bukti transfer di bawah</div>
                     </div>
                 </div>
             </div>
 
-            <!-- Upload Bukti Pembayaran -->
-            <div style="margin-top: 25px;">
-                <h4 style="margin-bottom: 15px;">
-                    <i class="fas fa-cloud-upload-alt"></i> Upload Bukti Pembayaran
-                </h4>
-                
-                <div class="upload-area" onclick="document.getElementById('fileInput').click()">
-                    <div class="upload-icon">
-                        <i class="fas fa-cloud-upload-alt"></i>
-                    </div>
-                    <div>Klik untuk upload screenshot bukti bayar</div>
-                    <div style="font-size: 12px; color: #7f8c8d; margin-top: 5px;">
-                        Format: JPG, PNG, PDF (Maks 5MB)
-                    </div>
-                    <input type="file" id="fileInput" accept="image/*,application/pdf" style="display: none;" onchange="handleFileSelect(this)">
+            <!-- Upload Bukti Pembayaran (hanya untuk DANA manual) -->
+            <div id="uploadArea" class="upload-area">
+                <div class="upload-icon">
+                    <i class="fas fa-cloud-upload-alt"></i>
                 </div>
-                
-                <div class="file-info" id="fileInfo">
-                    <i class="fas fa-check-circle" style="font-size: 24px;"></i>
-                    <div>
-                        <strong id="fileName">File terpilih</strong><br>
-                        <small id="fileSize">0 KB</small>
-                    </div>
-                    <button class="btn-remove" onclick="removeFile()" style="margin-left: auto; background: none; border: none; color: #155724; cursor: pointer;">
-                        <i class="fas fa-times"></i>
-                    </button>
+                <div>Klik untuk upload screenshot bukti bayar</div>
+                <div style="font-size: 12px; color: #7f8c8d; margin-top: 5px;">
+                    Format: JPG, PNG, PDF (Maks 5MB)
                 </div>
+                <input type="file" id="fileInput" accept="image/*,application/pdf" style="display: none;" onchange="handleFileSelect(this)">
             </div>
+            
+            <div class="file-info" id="fileInfo">
+                <i class="fas fa-check-circle" style="font-size: 24px;"></i>
+                <div>
+                    <strong id="fileName">File terpilih</strong><br>
+                    <small id="fileSize">0 KB</small>
+                </div>
+                <button class="btn-remove" onclick="removeFile()" style="margin-left: auto; background: none; border: none; color: #155724; cursor: pointer;">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <!-- Tombol Konfirmasi -->
+            <form id="paymentForm">
+                <input type="hidden" name="order_number" value="<?php echo $order['order_number']; ?>">
+                <input type="hidden" name="method" id="selectedMethod" value="midtrans">
+                
+                <?php if ($snapToken): ?>
+                <button type="button" class="btn-midtrans" id="payButton" onclick="payMidtrans()">
+                    <i class="fas fa-credit-card"></i> BAYAR DENGAN MIDTRANS
+                </button>
+                <?php endif; ?>
+                
+                <button type="button" class="btn-confirm" onclick="confirmPayment()" id="confirmBtn" style="display: none;">
+                    <i class="fas fa-check-circle"></i> KONFIRMASI PEMBAYARAN MANUAL
+                </button>
+            </form>
 
             <!-- Warning Box -->
             <div class="warning-box">
@@ -478,20 +568,11 @@ if (!$order) {
                     <strong>PENTING!</strong>
                     <ul style="margin-top: 10px; margin-left: 20px;">
                         <li>Transfer sesuai TOTAL BAYAR (termasuk kode unik)</li>
-                        <li>Semua metode pembayaran ditujukan ke DANA</li>
-                        <li>Pembayaran akan diverifikasi dalam 1x24 jam</li>
+                        <li>Pembayaran via Midtrans otomatis terverifikasi</li>
+                        <li>Pembayaran manual diverifikasi dalam 1x24 jam</li>
                     </ul>
                 </div>
             </div>
-
-            <!-- Tombol Konfirmasi -->
-            <form id="paymentForm" enctype="multipart/form-data">
-                <input type="hidden" name="order_number" value="<?php echo $order['order_number']; ?>">
-                <input type="hidden" name="method" id="selectedMethod" value="dana">
-                <button type="button" class="btn-confirm" onclick="confirmPayment()" id="confirmBtn" disabled>
-                    <i class="fas fa-check-circle"></i> KONFIRMASI PEMBAYARAN
-                </button>
-            </form>
 
             <!-- Back Link -->
             <div class="back-link">
@@ -508,9 +589,10 @@ if (!$order) {
         const orderNumber = '<?php echo $order['order_number']; ?>';
         const totalAmount = <?php echo $order['total']; ?>;
         const DANA_NUMBER = '<?php echo DANA_NUMBER; ?>';
+        const snapToken = '<?php echo $snapToken; ?>';
         
         // Variabel global
-        let selectedMethod = 'dana';
+        let selectedMethod = 'midtrans';
         let selectedFile = null;
         let timerInterval = null;
         let waktuTersisa = 600; // 10 menit
@@ -526,8 +608,22 @@ if (!$order) {
             
             document.querySelector(`[data-method="${method}"]`).classList.add('selected');
             
-            if (method !== 'dana') {
-                alert(`Untuk metode ${method.toUpperCase()}, transfer ke nomor DANA:\n\n${DANA_NUMBER}\na.n. UNIT PRODUKSI RPL`);
+            // Tampilkan/sembunyikan elemen berdasarkan metode
+            const danaInfo = document.getElementById('danaInfo');
+            const uploadArea = document.getElementById('uploadArea');
+            const payButton = document.getElementById('payButton');
+            const confirmBtn = document.getElementById('confirmBtn');
+            
+            if (method === 'midtrans') {
+                danaInfo.classList.remove('active');
+                uploadArea.classList.remove('active');
+                if (payButton) payButton.style.display = 'block';
+                confirmBtn.style.display = 'none';
+            } else {
+                danaInfo.classList.add('active');
+                uploadArea.classList.add('active');
+                if (payButton) payButton.style.display = 'none';
+                confirmBtn.style.display = 'block';
             }
             
             checkConfirmButton();
@@ -570,7 +666,9 @@ if (!$order) {
 
         function checkConfirmButton() {
             const confirmBtn = document.getElementById('confirmBtn');
-            confirmBtn.disabled = !selectedFile;
+            if (selectedMethod === 'dana') {
+                confirmBtn.disabled = !selectedFile;
+            }
         }
 
         // Timer
@@ -601,8 +699,34 @@ if (!$order) {
             }, 1000);
         }
 
-        // Konfirmasi pembayaran
+        // Midtrans Payment
+        function payMidtrans() {
+            showLoading();
+            
+            snap.pay(snapToken, {
+                onSuccess: function(result) {
+                    hideLoading();
+                    alert('✅ Pembayaran berhasil!');
+                    window.location.href = 'payment_success.php?order=' + orderNumber;
+                },
+                onPending: function(result) {
+                    hideLoading();
+                    alert('Pembayaran pending, silakan selesaikan pembayaran');
+                },
+                onError: function(result) {
+                    hideLoading();
+                    alert('❌ Pembayaran gagal: ' + result.status_message);
+                },
+                onClose: function() {
+                    hideLoading();
+                }
+            });
+        }
+
+        // Konfirmasi pembayaran manual
         function confirmPayment() {
+            if (selectedMethod !== 'dana') return;
+            
             if (!selectedFile) {
                 alert('Silakan upload bukti pembayaran terlebih dahulu!');
                 return;
@@ -674,6 +798,7 @@ if (!$order) {
         // Init
         document.addEventListener('DOMContentLoaded', function() {
             startPaymentTimer();
+            selectMethod('midtrans'); // Set default ke midtrans
         });
     </script>
 </body>
