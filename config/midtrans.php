@@ -3,8 +3,8 @@
 // File: config/midtrans.php
 
 // ==== GANTI DENGAN PUNYA LO ====
-define('MIDTRANS_SERVER_KEY', 'Mid-server-tOX-ANDRrgZY7EUef-dkuM-x');
-define('MIDTRANS_CLIENT_KEY', 'Mid-client-1ReZBYV2yaTuE9Z_');
+define('MIDTRANS_SERVER_KEY', 'ISI PAKE PUNYA LO!');
+define('MIDTRANS_CLIENT_KEY', 'ISI PAKE PUNYA LO!');
 define('MIDTRANS_IS_PRODUCTION', false); // false = mode sandbox
 
 // URL callback (ganti kalo udah online)
