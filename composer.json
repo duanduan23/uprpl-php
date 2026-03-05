@@ -1,0 +1,6 @@
+{
+    "require": {
+        "gopay/payments-sdk-php": "^1.10",
+        "midtrans/midtrans-php": "^2.6"
+    }
+}
